@@ -1,17 +1,11 @@
 import streamlit as st
 import requests
 from datetime import datetime
-from crewai import Agent, Task, Crew, LLM
-from dotenv import load_dotenv
+import anthropic
 import os
+from dotenv import load_dotenv
 
 load_dotenv()
-
-# ── Claude LLM 설정
-claude_llm = LLM(
-    model="claude-sonnet-4-20250514",
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
-)
 
 # ── 페이지 설정
 st.set_page_config(page_title="Simon's Crypto Dashboard", page_icon="📊", layout="wide")
@@ -31,7 +25,6 @@ PORTFOLIO = {
     "URO":  {"name": "Urolithin A", "sector": "DeSci"},
 }
 
-# ── CoinGecko ID 매핑
 COINGECKO_IDS = {
     "BTC":  "bitcoin",
     "ETH":  "ethereum",
@@ -44,7 +37,7 @@ COINGECKO_IDS = {
     "URO":  "urolithin-a",
 }
 
-# ── 가격 데이터 (CoinGecko, 5분 캐시)
+# ── 가격 데이터
 @st.cache_data(ttl=300)
 def get_prices():
     ids = ",".join(COINGECKO_IDS.values())
@@ -92,7 +85,7 @@ st.subheader("🤖 AI 포트폴리오 분석")
 st.caption("Claude AI가 현재 포트폴리오를 분석해드립니다 (API 비용 발생)")
 
 if st.button("🔍 AI 분석 시작", type="primary"):
-    with st.spinner("AI Agent들이 분석 중입니다..."):
+    with st.spinner("Claude가 분석 중입니다..."):
 
         price_summary = []
         for symbol, info in PORTFOLIO.items():
@@ -103,62 +96,47 @@ if st.button("🔍 AI 분석 시작", type="primary"):
             price_summary.append(f"{symbol}({info['sector']}): ${price:.6f} | 24h: {change:.2f}%")
         price_text = "\n".join(price_summary)
 
-        analyst = Agent(
-            role="크립토 포트폴리오 분석가",
-            goal="보유 코인의 현재 상태를 분석하고 섹터별 리스크와 기회를 파악한다",
-            backstory="10년 경력의 크립토 애널리스트로 DeFi, 밈코인, DeSci, 메이저 코인 전반에 걸쳐 깊은 통찰력을 가지고 있다.",
-            verbose=False,
-            llm=claude_llm,
+        prompt = f"""
+너는 크립토 포트폴리오 분석 전문가야.
+
+아래는 Simon의 현재 보유 포트폴리오 현황이야 (CoinGecko 실시간 데이터):
+{price_text}
+
+Simon의 투자 전략:
+- BTC/ETH/SOL: 장기 보유 메이저 코인
+- AAVE/SEI: DeFi 섹터 알트코인
+- DOGE/PEPE: 밈코인 (사이클 트레이딩)
+- RIF/URO: DeSci 소액 고위험 포지션
+
+다음을 분석해줘:
+
+## 📊 섹터별 24시간 성과
+각 섹터 (메이저/DeFi/밈코인/DeSci) 성과를 간결하게 요약해줘.
+
+## 🔍 주목할 코인
+가장 주목할 코인 1~2개와 이유를 알려줘.
+
+## ⚠️ 주의할 점
+현재 포트폴리오에서 주의할 점 1가지.
+
+## ✅ 긍정적 신호
+현재 긍정적인 신호 1가지.
+
+## 💡 한 줄 요약
+Simon을 위한 한 줄 요약.
+
+한국어로 간결하고 직접적으로 작성해줘.
+"""
+
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
         )
-
-        advisor = Agent(
-            role="투자 전략 어드바이저",
-            goal="분석 결과를 바탕으로 실용적인 투자 인사이트를 제공한다",
-            backstory="리스크 관리와 사이클 투자 전략 전문가로, 감정 배제한 데이터 기반 조언을 제공한다.",
-            verbose=False,
-            llm=claude_llm,
-        )
-
-        analysis_task = Task(
-            description=f"""
-            아래는 현재 보유 포트폴리오 현황이다 (CoinGecko 실시간 데이터):
-            {price_text}
-
-            다음을 분석해라:
-            1. 섹터별 (메이저/DeFi/밈코인/DeSci) 24시간 성과 요약
-            2. 가장 주목할 코인 (상승/하락 기준)
-            3. 현재 시장 분위기 판단
-            """,
-            agent=analyst,
-            expected_output="섹터별 분석과 주목 코인을 포함한 현황 리포트"
-        )
-
-        advice_task = Task(
-            description="""
-            분석 결과를 바탕으로 Simon에게 실용적인 인사이트를 제공해라.
-            Simon의 전략: 메이저 3개(BTC/ETH/SOL) 장기보유, 알트는 사이클 트레이딩, DeSci(RIF/URO)는 고위험 소액 포지션
-
-            다음을 포함해라:
-            1. 현재 포트폴리오에서 주의할 점 1가지
-            2. 긍정적인 신호 1가지
-            3. 한 줄 요약
-
-            간결하고 직접적으로 작성해라.
-            """,
-            agent=advisor,
-            expected_output="실용적인 투자 인사이트 3가지와 한 줄 요약"
-        )
-
-        crew = Crew(
-            agents=[analyst, advisor],
-            tasks=[analysis_task, advice_task],
-            verbose=False,
-        )
-
-        result = crew.kickoff()
 
         st.success("분석 완료!")
-        st.markdown(str(result))
+        st.markdown(message.content[0].text)
 
 st.divider()
 st.caption("💡 가격 데이터: CoinGecko API (5분 캐시) | AI 분석: Claude API")
