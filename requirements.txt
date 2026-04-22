@@ -1,4 +1,4 @@
-crewai[anthropic]
 streamlit
 requests
 python-dotenv
+anthropic
